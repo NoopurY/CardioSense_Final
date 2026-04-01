@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Panel } from "@/components/ui/Panel";
-import { Input } from "@/components/ui/Input";
-import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 
 type Device = {
@@ -24,9 +22,6 @@ type DeviceStatus = {
 };
 
 export default function DevicePage() {
-  const [deviceId, setDeviceId] = useState("");
-  const [deviceName, setDeviceName] = useState("");
-  const [location, setLocation] = useState("");
   const [devices, setDevices] = useState<Device[]>([]);
   const [status, setStatus] = useState<DeviceStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,22 +66,6 @@ export default function DevicePage() {
     };
   }, [activeDevice?._id]);
 
-  const registerDevice = async () => {
-    if (!deviceId.trim() || !deviceName.trim()) return;
-    const res = await api.post("/api/devices", {
-      device_id_str: deviceId,
-      name: deviceName,
-      location,
-    });
-    const created = res.data;
-    if (created?._id) {
-      setDevices((prev) => [created, ...prev]);
-      setDeviceId("");
-      setDeviceName("");
-      setLocation("");
-    }
-  };
-
   const connected = Boolean(status?.connected);
   const heartbeatSec =
     typeof status?.heartbeat_age_ms === "number" && Number.isFinite(status.heartbeat_age_ms)
@@ -95,13 +74,20 @@ export default function DevicePage() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Panel title="ESP32 Registration">
-        <form className="grid gap-3">
-          <Input label="Device ID" aria-label="Device ID" placeholder="ESP32_001" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} />
-          <Input label="Device Name" aria-label="Device Name" placeholder="Chest Lead A" value={deviceName} onChange={(e) => setDeviceName(e.target.value)} />
-          <Input label="Location" aria-label="Location" placeholder="Lab 3" value={location} onChange={(e) => setLocation(e.target.value)} />
-          <Button type="button" onClick={() => void registerDevice()}>Register Device</Button>
-        </form>
+      <Panel title="ESP32 Auto Setup" subtitle="No manual registration required">
+        <div className="space-y-2 text-sm text-slate-300">
+          <p>
+            Device onboarding is automatic. As soon as ESP32 sends heartbeat with
+            <span className="mono-data"> enrollment_key</span>, backend provisions the device and returns
+            <span className="mono-data"> api_key</span>.
+          </p>
+          <p>
+            If no device appears, verify:
+          </p>
+          <p>1. ESP32 is connected to WiFi</p>
+          <p>2. API_BASE is reachable from ESP32 network</p>
+          <p>3. DEVICE_ENROLLMENT_KEY matches backend env</p>
+        </div>
       </Panel>
 
       <Panel title="Connection Status">
@@ -152,6 +138,7 @@ export default function DevicePage() {
           <p>1. Send heartbeat to <span className="mono-data">/api/devices/heartbeat</span> every 5s.</p>
           <p>2. Set <span className="mono-data">sensor_connected=true</span> only when sensor wire is attached.</p>
           <p>3. Send ECG chunks of exactly <span className="mono-data">60 samples</span> to <span className="mono-data">/api/sensor/data</span>.</p>
+          <p>4. For zero-touch onboarding, set <span className="mono-data">AUTO_PROVISION_USER_EMAIL</span> and <span className="mono-data">DEVICE_ENROLLMENT_KEY</span> in backend env.</p>
         </div>
       </Panel>
     </div>

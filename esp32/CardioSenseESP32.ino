@@ -8,7 +8,7 @@ const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
 
 const char* API_BASE = "https://your-backend-domain.com"; // no trailing slash
 const char* DEVICE_ID = "ESP32_001";
-const char* API_KEY = "PASTE_DEVICE_API_KEY";
+const char* DEVICE_ENROLLMENT_KEY = "SET_DEVICE_ENROLLMENT_KEY";
 
 const int ECG_PIN = 34;          // AD8232 analog output pin
 const int LO_PLUS_PIN = 26;      // AD8232 LO+ pin (optional)
@@ -23,6 +23,7 @@ float ecgChunk[CHUNK_SIZE];
 int chunkIndex = 0;
 unsigned long lastHeartbeat = 0;
 unsigned long nextSampleMicros = 0;
+String runtimeApiKey = "";
 
 float normalizeSample(int raw) {
   // Convert ADC 0..4095 to approximately -1.0..1.0
@@ -46,20 +47,27 @@ void connectWifi() {
   }
 }
 
-bool postJson(const String& url, const String& payload, int* statusCode = nullptr) {
+bool postJson(const String& url, const String& payload, String* responseBody = nullptr, int* statusCode = nullptr) {
   HTTPClient http;
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
   int code = http.POST((uint8_t*)payload.c_str(), payload.length());
+  if (responseBody) {
+    *responseBody = http.getString();
+  }
   if (statusCode) *statusCode = code;
   http.end();
   return code >= 200 && code < 300;
 }
 
 void sendHeartbeat() {
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;
   doc["device_id"] = DEVICE_ID;
-  doc["api_key"] = API_KEY;
+  if (runtimeApiKey.length() > 0) {
+    doc["api_key"] = runtimeApiKey;
+  } else {
+    doc["enrollment_key"] = DEVICE_ENROLLMENT_KEY;
+  }
   bool connected = sensorConnected();
   doc["sensor_connected"] = connected;
   doc["sampling_rate"] = SAMPLE_RATE;
@@ -69,18 +77,29 @@ void sendHeartbeat() {
   String body;
   serializeJson(doc, body);
 
+  String response;
   int code = 0;
-  postJson(String(API_BASE) + "/api/devices/heartbeat", body, &code);
+  if (!postJson(String(API_BASE) + "/api/devices/heartbeat", body, &response, &code)) {
+    return;
+  }
+
+  StaticJsonDocument<256> resDoc;
+  if (deserializeJson(resDoc, response) == DeserializationError::Ok) {
+    const char* apiKey = resDoc["api_key"] | "";
+    if (strlen(apiKey) > 0) {
+      runtimeApiKey = String(apiKey);
+    }
+  }
 }
 
 void sendSensorChunk() {
-  if (!sensorConnected()) {
+  if (!sensorConnected() || runtimeApiKey.length() == 0) {
     return;
   }
 
   StaticJsonDocument<4096> doc;
   doc["device_id"] = DEVICE_ID;
-  doc["api_key"] = API_KEY;
+  doc["api_key"] = runtimeApiKey;
   JsonArray signal = doc.createNestedArray("signal");
 
   for (int i = 0; i < CHUNK_SIZE; i++) {
@@ -91,7 +110,7 @@ void sendSensorChunk() {
   serializeJson(doc, body);
 
   int code = 0;
-  postJson(String(API_BASE) + "/api/sensor/data", body, &code);
+  postJson(String(API_BASE) + "/api/sensor/data", body, nullptr, &code);
 }
 
 void setup() {
