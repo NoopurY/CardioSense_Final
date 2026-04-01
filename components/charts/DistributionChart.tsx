@@ -18,6 +18,11 @@ const poissonData = Array.from({ length: 8 }, (_, k) => {
   return { k, p: Number(p.toFixed(3)) };
 });
 
+type PoissonPoint = {
+  k: number;
+  p: number;
+};
+
 export function NormalDistributionChart() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -38,15 +43,17 @@ export function NormalDistributionChart() {
   );
 }
 
-export function PoissonChart() {
+export function PoissonChart({ data }: { data?: PoissonPoint[] }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   if (!mounted) return <div className="h-56 w-full rounded bg-[#031424]" />;
 
+  const chartData = data && data.length > 0 ? data : poissonData;
+
   return (
     <div className="h-56 w-full">
       <ResponsiveContainer>
-        <BarChart data={poissonData}>
+        <BarChart data={chartData}>
           <CartesianGrid stroke="#0d4f8c33" />
           <XAxis dataKey="k" stroke="#7fa4bf" />
           <YAxis stroke="#7fa4bf" />

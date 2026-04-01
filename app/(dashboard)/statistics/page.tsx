@@ -13,6 +13,14 @@ type Summary = {
   total_recordings: number;
 };
 
+type HistoryItem = {
+  _id: string;
+  date: string | null;
+  bpm: number;
+  prediction: string;
+  risk: "Low" | "Medium" | "High" | "Unknown";
+};
+
 const conceptExplainers = [
   {
     title: "Normal Distribution",
@@ -81,18 +89,117 @@ const valueInterpretationGuide = [
   "Covariance sign: positive means variables move together; negative means they move in opposite directions; near zero means weak linear co-movement.",
 ];
 
+function factorial(n: number): number {
+  if (n <= 1) return 1;
+  let result = 1;
+  for (let i = 2; i <= n; i += 1) result *= i;
+  return result;
+}
+
+function buildPoissonFromHistory(history: HistoryItem[]) {
+  const withDates = history
+    .map((h) => ({ ...h, ts: h.date ? new Date(h.date).getTime() : NaN }))
+    .filter((h) => Number.isFinite(h.ts));
+
+  if (withDates.length < 2) return null;
+
+  const minTs = Math.min(...withDates.map((h) => h.ts));
+  const maxTs = Math.max(...withDates.map((h) => h.ts));
+  const observedHours = Math.max((maxTs - minTs) / 3_600_000, 1);
+
+  const arrhythmiaCount = withDates.filter((h) => {
+    const label = h.prediction.toLowerCase();
+    return label !== "normal" && label !== "pending";
+  }).length;
+
+  const lambda = arrhythmiaCount / observedHours;
+  const probabilities = Array.from({ length: 7 }, (_, k) => {
+    const p = (Math.exp(-lambda) * lambda ** k) / factorial(k);
+    return { k, p: Number(p.toFixed(3)) };
+  });
+
+  return {
+    lambda: Number(lambda.toFixed(2)),
+    probabilities,
+  };
+}
+
+function rank(values: number[]): number[] {
+  const indexed = values.map((v, i) => ({ v, i }));
+  indexed.sort((a, b) => a.v - b.v);
+  const ranks = new Array(values.length).fill(0);
+
+  let pos = 0;
+  while (pos < indexed.length) {
+    let end = pos;
+    while (end + 1 < indexed.length && indexed[end + 1].v === indexed[pos].v) end += 1;
+    const avgRank = (pos + end + 2) / 2;
+    for (let j = pos; j <= end; j += 1) ranks[indexed[j].i] = avgRank;
+    pos = end + 1;
+  }
+
+  return ranks;
+}
+
+function riskToNumeric(risk: HistoryItem["risk"]): number {
+  if (risk === "Low") return 1;
+  if (risk === "Medium") return 2;
+  if (risk === "High") return 3;
+  return 0;
+}
+
+function buildSpearmanFromHistory(history: HistoryItem[]) {
+  const points = history
+    .map((h) => ({ bpm: h.bpm, riskScore: riskToNumeric(h.risk) }))
+    .filter((h) => Number.isFinite(h.bpm) && h.bpm > 0 && h.riskScore > 0)
+    .slice(0, 8);
+
+  const n = points.length;
+  if (n < 3) return null;
+
+  const bpmRanks = rank(points.map((p) => p.bpm));
+  const riskRanks = rank(points.map((p) => p.riskScore));
+
+  const rows = points.map((_, idx) => {
+    const d = bpmRanks[idx] - riskRanks[idx];
+    return {
+      sample: `S${idx + 1}`,
+      rankBpm: bpmRanks[idx],
+      rankRisk: riskRanks[idx],
+      d2: Number((d * d).toFixed(2)),
+    };
+  });
+
+  const sumD2 = rows.reduce((acc, row) => acc + row.d2, 0);
+  const rho = 1 - (6 * sumD2) / (n * (n * n - 1));
+
+  return {
+    rows,
+    rho: Number(rho.toFixed(3)),
+  };
+}
+
 export default function StatisticsPage() {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
 
   useEffect(() => {
     setLoading(true);
-    api
-      .get("/api/dashboard/summary")
-      .then((res) => setSummary(res.data ?? null))
-      .catch(() => setSummary(null))
+    Promise.all([api.get("/api/dashboard/summary"), api.get("/api/ecg/history")])
+      .then(([summaryRes, historyRes]) => {
+        setSummary(summaryRes.data ?? null);
+        setHistory(Array.isArray(historyRes.data?.data) ? (historyRes.data.data as HistoryItem[]) : []);
+      })
+      .catch(() => {
+        setSummary(null);
+        setHistory([]);
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  const poissonStats = buildPoissonFromHistory(history);
+  const spearmanStats = buildSpearmanFromHistory(history);
 
   if (loading) {
     return (
@@ -146,9 +253,15 @@ export default function StatisticsPage() {
         <p className="mt-1 text-xs text-cyan-200">Interpretation: Most readings are centered near 79 BPM, and typical variation is about ±8 BPM.</p>
       </Panel>
       <Panel title="Poisson Distribution" subtitle="Arrhythmia events per hour">
-        <PoissonChart />
-        <p className="text-xs text-slate-300">λ = 2.2 events/hour</p>
-        <p className="mt-1 text-xs text-cyan-200">Interpretation: You can expect about 2 to 3 arrhythmia events per hour on average.</p>
+        {poissonStats ? (
+          <>
+            <PoissonChart data={poissonStats.probabilities} />
+            <p className="text-xs text-slate-300">λ = {poissonStats.lambda} events/hour (computed from your stored records)</p>
+            <p className="mt-1 text-xs text-cyan-200">Interpretation: Based on your current history window, this is the expected event rate per hour.</p>
+          </>
+        ) : (
+          <p className="text-sm text-slate-300">Not enough timestamped records yet to estimate event rate. Connect ESP32 and stream data first.</p>
+        )}
       </Panel>
       <Panel title="Bayes Theorem" subtitle="AI confidence calculator">
         <BayesWidget />
@@ -174,28 +287,34 @@ export default function StatisticsPage() {
         <p className="mt-1 text-xs text-cyan-200">Interpretation: Positive coefficients indicate an upward trend; the quadratic model captures curvature when linear fit is not enough.</p>
       </Panel>
       <Panel title="Spearman Rank R" subtitle="Ranked variables and differences">
-        <table className="w-full text-xs text-slate-300">
-          <thead>
-            <tr>
-              <th className="text-left">Sample</th>
-              <th>Rank BPM</th>
-              <th>Rank HRV</th>
-              <th>d²</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[1, 2, 3, 4, 5].map((i) => (
-              <tr key={i} className="border-t border-slate-800">
-                <td>S{i}</td>
-                <td className="text-center">{i}</td>
-                <td className="text-center">{i + (i % 2 ? 1 : -1)}</td>
-                <td className="text-center">1</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="mt-2 text-xs text-slate-300">R = 1 - (6 Σd²) / n(n² - 1)</p>
-        <p className="mt-1 text-xs text-cyan-200">Interpretation: R closer to +1 means rankings are very similar; closer to 0 means weak monotonic relationship.</p>
+        {spearmanStats ? (
+          <>
+            <table className="w-full text-xs text-slate-300">
+              <thead>
+                <tr>
+                  <th className="text-left">Sample</th>
+                  <th>Rank BPM</th>
+                  <th>Rank Risk</th>
+                  <th>d²</th>
+                </tr>
+              </thead>
+              <tbody>
+                {spearmanStats.rows.map((row) => (
+                  <tr key={row.sample} className="border-t border-slate-800">
+                    <td>{row.sample}</td>
+                    <td className="text-center">{row.rankBpm.toFixed(1)}</td>
+                    <td className="text-center">{row.rankRisk.toFixed(1)}</td>
+                    <td className="text-center">{row.d2.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-xs text-slate-300">R = {spearmanStats.rho} (from your stored records)</p>
+            <p className="mt-1 text-xs text-cyan-200">Interpretation: R closer to +1 means rankings are very similar; closer to 0 means weak monotonic relationship.</p>
+          </>
+        ) : (
+          <p className="text-sm text-slate-300">Not enough ranked records yet for Spearman analysis. Add more ECG captures from ESP32.</p>
+        )}
       </Panel>
       <Panel title="Covariance Matrix">
         <CovarianceHeatmap />
