@@ -1,26 +1,147 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #020d1a;
+  --panel: #071e35;
+  --border: #0d4f8c;
+  --accent: #00d4ff;
+  --accent-alt: #8b5cf6;
+  --accent-green: #00ff88;
+  --danger: #ff2244;
+  --warning: #ffcc00;
+  --text: #d9f4ff;
+  --muted: #7fa4bf;
+  --mono: var(--font-mono-tech);
+  --display: var(--font-rajdhani);
+  --body: var(--font-exo);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --font-sans: var(--body);
+  --font-mono: var(--mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(circle at 10% 10%, rgb(0 212 255 / 12%), transparent 35%),
+    radial-gradient(circle at 90% 70%, rgb(13 79 140 / 20%), transparent 40%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--body), sans-serif;
+}
+
+* {
+  scrollbar-color: #0d4f8c #031224;
+}
+
+.cardio-panel {
+  position: relative;
+  background: linear-gradient(180deg, rgb(7 30 53 / 92%), rgb(4 24 43 / 88%));
+  border: 1px solid rgb(13 79 140 / 65%);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.cardio-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgb(0 212 255 / 80%), transparent);
+}
+
+.cardio-panel::after {
+  content: "";
+  position: absolute;
+  inset: -40% auto auto -80%;
+  width: 60%;
+  height: 200%;
+  transform: rotate(18deg);
+  background: linear-gradient(90deg, transparent, rgb(0 212 255 / 12%), transparent);
+  transition: left 350ms ease;
+}
+
+.cardio-panel:hover::after {
+  left: 120%;
+}
+
+.glow-text {
+  font-family: var(--display), sans-serif;
+  color: var(--accent);
+  text-shadow: 0 0 18px rgb(0 212 255 / 35%);
+}
+
+.pulse-dot {
+  position: relative;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  background: currentcolor;
+}
+
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: -0.25rem;
+  border-radius: 999px;
+  border: 1px solid currentcolor;
+  animation: pulse-dot 1.6s infinite;
+}
+
+@keyframes pulse-dot {
+  0% {
+    opacity: 1;
+    transform: scale(0.5);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+.ecg-grid {
+  background-image:
+    linear-gradient(rgb(0 212 255 / 8%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(0 212 255 / 8%) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.ecg-line {
+  width: 100%;
+  height: 48px;
+  background:
+    linear-gradient(90deg, transparent, rgb(0 212 255 / 80%), transparent),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 40px,
+      rgb(0 212 255 / 10%) 40px 41px
+    );
+  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 1200 48' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 24 L150 24 L172 24 L180 6 L192 38 L205 24 L240 24 L260 24 L272 16 L290 28 L305 24 L1200 24' stroke='black' stroke-width='4' fill='none' /%3E%3C/svg%3E") center / cover no-repeat;
+  animation: ecg-scroll 2.8s linear infinite;
+}
+
+@keyframes ecg-scroll {
+  from {
+    background-position-x: 0;
+  }
+
+  to {
+    background-position-x: 1200px;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.mono-data {
+  font-family: var(--mono), monospace;
+  color: var(--accent);
 }
