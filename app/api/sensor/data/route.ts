@@ -6,23 +6,16 @@ import { DeviceModel, ECGRecordModel, PredictionModel } from "@/lib/server/model
 function processSignal(signal: number[]) {
   if (!signal.length) return [];
 
-  const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
-  const centered = signal.map((v) => v - mean);
+  // Preserve morphology from ESP32 stream: avoid per-chunk recenter/rescale.
+  // Only apply a light 3-point moving average and safety clipping.
+  const clipped = signal.map((v) => Math.max(-2.5, Math.min(2.5, Number(v))));
+  if (clipped.length < 3) return clipped;
 
-  // Lightweight smoothing on backend for stable UI rendering from real sensor chunks.
-  const alpha = 0.22;
-  let state = centered[0] ?? 0;
-  const smoothed = centered.map((v) => {
-    state += alpha * (v - state);
-    return state;
-  });
-
-  // Normalize amplitude based on current chunk's peak-to-peak range.
-  const min = Math.min(...smoothed);
-  const max = Math.max(...smoothed);
-  const p2p = Math.max(max - min, 1e-6);
-  const scale = 1.0 / p2p;
-  return smoothed.map((v) => Math.max(-1.5, Math.min(1.5, v * scale * 2.0)));
+  const out = [...clipped];
+  for (let i = 1; i < clipped.length - 1; i++) {
+    out[i] = (clipped[i - 1] + clipped[i] + clipped[i + 1]) / 3;
+  }
+  return out;
 }
 
 function estimateBpm(signal: number[], samplingRate: number) {
