@@ -15,6 +15,8 @@ export default function AnalysisPage() {
   const [analyzed, setAnalyzed] = useState(false);
   const [sourceMode, setSourceMode] = useState<"live" | "simulated">("live");
   const pushECG = useCardioStore((s) => s.pushECG);
+  const setBpm = useCardioStore((s) => s.setBpm);
+  const bpm = useCardioStore((s) => s.bpm);
   const storeSignal = useCardioStore((s) => s.ecgBuffer);
   const lastLiveTsRef = useRef<number>(0);
 
@@ -55,6 +57,9 @@ export default function AnalysisPage() {
           if (Array.isArray(c.signal) && c.signal.length) {
             pushECG(c.signal);
           }
+          if (typeof c.bpm === "number" && c.bpm > 0) {
+            setBpm(c.bpm);
+          }
           if (typeof c.ts === "number" && c.ts > lastLiveTsRef.current) {
             lastLiveTsRef.current = c.ts;
           }
@@ -77,7 +82,47 @@ export default function AnalysisPage() {
       alive = false;
       clearInterval(timer);
     };
-  }, [pushECG]);
+  }, [pushECG, setBpm]);
+
+  const liveSignal = sourceMode === "live" ? storeSignal : signal;
+  const quality = useMemo(() => {
+    if (!liveSignal.length) {
+      return { snrDb: null as number | null, baseline: "--", noise: null as number | null, amplitude: null as number | null };
+    }
+
+    const window = liveSignal.slice(-360);
+    const n = window.length;
+    if (!n) {
+      return { snrDb: null as number | null, baseline: "--", noise: null as number | null, amplitude: null as number | null };
+    }
+
+    let mean = 0;
+    for (const v of window) mean += v;
+    mean /= n;
+
+    let varSignal = 0;
+    for (const v of window) {
+      const d = v - mean;
+      varSignal += d * d;
+    }
+    varSignal /= n;
+
+    let diffSq = 0;
+    for (let i = 1; i < window.length; i++) {
+      const d = window[i] - window[i - 1];
+      diffSq += d * d;
+    }
+    const noise = Math.sqrt(diffSq / Math.max(1, window.length - 1));
+    const signalRms = Math.sqrt(Math.max(varSignal, 1e-9));
+    const snrDb = 20 * Math.log10(Math.max(signalRms / Math.max(noise, 1e-6), 1e-6));
+
+    const min = Math.min(...window);
+    const max = Math.max(...window);
+    const amplitude = max - min;
+
+    const baseline = Math.abs(mean) < 0.05 ? "Stable" : Math.abs(mean) < 0.12 ? "Mild drift" : "High drift";
+    return { snrDb, baseline, noise, amplitude };
+  }, [liveSignal]);
 
   return (
     <div className="space-y-4">
@@ -98,14 +143,16 @@ export default function AnalysisPage() {
       </Panel>
 
       <Panel title="Waveform Viewer" subtitle="Zoomable ECG with R-peaks">
-        <LiveECGChart points={sourceMode === "live" ? storeSignal : signal} />
+        <LiveECGChart points={liveSignal} />
       </Panel>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Panel title="Signal Quality">
-          <p className="text-sm text-slate-300">SNR: <span className="mono-data">22.4 dB</span></p>
-          <p className="text-sm text-slate-300">Baseline Wander: <span className="mono-data">Low</span></p>
-          <p className="text-sm text-slate-300">Noise Level: <span className="mono-data">0.12</span></p>
+          <p className="text-sm text-slate-300">BPM: <span className="mono-data">{bpm > 0 ? bpm : "--"}</span></p>
+          <p className="text-sm text-slate-300">SNR: <span className="mono-data">{quality.snrDb == null ? "--" : `${quality.snrDb.toFixed(1)} dB`}</span></p>
+          <p className="text-sm text-slate-300">Baseline Wander: <span className="mono-data">{quality.baseline}</span></p>
+          <p className="text-sm text-slate-300">Noise Level: <span className="mono-data">{quality.noise == null ? "--" : quality.noise.toFixed(4)}</span></p>
+          <p className="text-sm text-slate-300">Peak-to-Peak: <span className="mono-data">{quality.amplitude == null ? "--" : quality.amplitude.toFixed(3)}</span></p>
         </Panel>
         <Panel title="AI Result">
           {analyzed ? (

@@ -28,6 +28,9 @@ const float ECG_GAIN = 4.0f;
 const float ECG_CLIP = 1.8f;
 const int RAW_ZERO_THRESHOLD = 3;
 const int RAW_ZERO_STREAK_LIMIT = 120;
+const int ADC_SAMPLES_PER_POINT = 4;
+const float DC_BLOCK_R = 0.995f;
+const float LP_ALPHA = 0.22f;
 // -----------------------------------------------------
 
 float ecgChunk[CHUNK_SIZE];
@@ -43,13 +46,16 @@ String runtimeApiKey = "";
 bool baselineInitialized = false;
 float baselineEma = 0.0f;
 unsigned long rawZeroStreak = 0;
+float prevRawNorm = 0.0f;
+float prevDcBlocked = 0.0f;
+float lpState = 0.0f;
 
 bool hasValidEnrollmentKey() {
   return String(DEVICE_ENROLLMENT_KEY) != "SET_DEVICE_ENROLLMENT_KEY";
 }
 
 float normalizeSample(int raw) {
-  // Keep waveform real by only removing DC baseline and applying linear gain.
+  // Keep waveform real: baseline removal + light filtering for cleaner morphology.
   if (!baselineInitialized) {
     baselineEma = (float)raw;
     baselineInitialized = true;
@@ -57,7 +63,16 @@ float normalizeSample(int raw) {
 
   baselineEma += ECG_BASELINE_ALPHA * ((float)raw - baselineEma);
   float centered = ((float)raw - baselineEma) / 2048.0f;
-  float amplified = centered * ECG_GAIN;
+
+  // DC-block filter to suppress slow baseline wander from motion/breathing.
+  float dcBlocked = centered - prevRawNorm + DC_BLOCK_R * prevDcBlocked;
+  prevRawNorm = centered;
+  prevDcBlocked = dcBlocked;
+
+  // Light low-pass smoothing to reduce high-frequency noise.
+  lpState += LP_ALPHA * (dcBlocked - lpState);
+
+  float amplified = lpState * ECG_GAIN;
 
   if (amplified > ECG_CLIP) return ECG_CLIP;
   if (amplified < -ECG_CLIP) return -ECG_CLIP;
@@ -291,7 +306,11 @@ void loop() {
   unsigned long sampleIntervalUs = 1000000UL / SAMPLE_RATE;
 
   if ((long)(nowUs - nextSampleMicros) >= 0) {
-    int raw = analogRead(ECG_PIN);
+    long rawAcc = 0;
+    for (int i = 0; i < ADC_SAMPLES_PER_POINT; i++) {
+      rawAcc += analogRead(ECG_PIN);
+    }
+    int raw = (int)(rawAcc / ADC_SAMPLES_PER_POINT);
     updateSignalPathHealth(raw);
     float normalized = normalizeSample(raw);
     ecgChunk[chunkIndex++] = normalized;
