@@ -26,6 +26,8 @@ const int NO_API_KEY_LOG_MS = 5000;
 const float ECG_BASELINE_ALPHA = 0.008f;
 const float ECG_GAIN = 4.0f;
 const float ECG_CLIP = 1.8f;
+const int RAW_ZERO_THRESHOLD = 3;
+const int RAW_ZERO_STREAK_LIMIT = 120;
 // -----------------------------------------------------
 
 float ecgChunk[CHUNK_SIZE];
@@ -40,6 +42,7 @@ unsigned long uploadOkCount = 0;
 String runtimeApiKey = "";
 bool baselineInitialized = false;
 float baselineEma = 0.0f;
+unsigned long rawZeroStreak = 0;
 
 bool hasValidEnrollmentKey() {
   return String(DEVICE_ENROLLMENT_KEY) != "SET_DEVICE_ENROLLMENT_KEY";
@@ -61,11 +64,28 @@ float normalizeSample(int raw) {
   return amplified;
 }
 
-bool sensorConnected() {
+bool leadsConnected() {
   int loPlus = digitalRead(LO_PLUS_PIN);
   int loMinus = digitalRead(LO_MINUS_PIN);
   // AD8232 lead-off pins HIGH generally indicate disconnected electrodes
   return !(loPlus == HIGH || loMinus == HIGH);
+}
+
+void updateSignalPathHealth(int raw) {
+  if (raw <= RAW_ZERO_THRESHOLD) {
+    rawZeroStreak += 1;
+  } else {
+    rawZeroStreak = 0;
+  }
+}
+
+bool outputWireConnected() {
+  // If AD8232 OUT is disconnected from ESP32 ADC, raw often stays at 0 for long streaks.
+  return rawZeroStreak < RAW_ZERO_STREAK_LIMIT;
+}
+
+bool sensorConnected() {
+  return leadsConnected() && outputWireConnected();
 }
 
 void debugPrintSample(int raw, float normalized) {
@@ -89,6 +109,8 @@ void debugPrintSample(int raw, float normalized) {
   Serial.print(loPlus);
   Serial.print(" LO-=");
   Serial.print(loMinus);
+  Serial.print(" out=");
+  Serial.print(outputWireConnected() ? "ok" : "disconnected");
   Serial.print(" wifi=");
   Serial.println(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected");
 }
@@ -190,8 +212,14 @@ void sendHeartbeat() {
 
 void sendSensorChunk() {
   if (!sensorConnected() || runtimeApiKey.length() == 0) {
-    if (ENABLE_SERIAL_DEBUG && runtimeApiKey.length() == 0 && millis() - lastNoApiKeyLog >= NO_API_KEY_LOG_MS) {
-      Serial.println("Skipping chunk: api_key not available yet");
+    if (ENABLE_SERIAL_DEBUG && millis() - lastNoApiKeyLog >= NO_API_KEY_LOG_MS) {
+      if (runtimeApiKey.length() == 0) {
+        Serial.println("Skipping chunk: api_key not available yet");
+      } else if (!outputWireConnected()) {
+        Serial.println("Skipping chunk: AD8232 OUT path appears disconnected");
+      } else {
+        Serial.println("Skipping chunk: sensor leads disconnected");
+      }
       lastNoApiKeyLog = millis();
     }
     return;
@@ -264,6 +292,7 @@ void loop() {
 
   if ((long)(nowUs - nextSampleMicros) >= 0) {
     int raw = analogRead(ECG_PIN);
+    updateSignalPathHealth(raw);
     float normalized = normalizeSample(raw);
     ecgChunk[chunkIndex++] = normalized;
     debugPrintSample(raw, normalized);
