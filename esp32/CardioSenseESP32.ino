@@ -3,12 +3,12 @@
 #include <ArduinoJson.h>
 
 // -------------------- User Config --------------------
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
+const char* WIFI_SSID = "NOOPUR Y.";
+const char* WIFI_PASS = "1206NOOPUR";
 
-const char* API_BASE = "https://your-backend-domain.com"; // no trailing slash
+const char* API_BASE = "https://cardio-sense-final.vercel.app"; // no trailing slash
 const char* DEVICE_ID = "ESP32_001";
-const char* DEVICE_ENROLLMENT_KEY = "SET_DEVICE_ENROLLMENT_KEY";
+const char* DEVICE_ENROLLMENT_KEY = "cardiosense-enroll-esp32-001-2026";
 
 const int ECG_PIN = 34;          // AD8232 analog output pin
 const int LO_PLUS_PIN = 26;      // AD8232 LO+ pin (optional)
@@ -17,13 +17,26 @@ const int LO_MINUS_PIN = 27;     // AD8232 LO- pin (optional)
 const int SAMPLE_RATE = 360;     // Must match backend expectation
 const int CHUNK_SIZE = 60;       // Backend requires exactly 60 samples
 const int HEARTBEAT_MS = 5000;   // Send heartbeat every 5s
+const bool ENABLE_SERIAL_DEBUG = true;
+const int DEBUG_PRINT_MS = 1500;
+const int WIFI_RETRY_DELAY_MS = 400;
+const int WIFI_CONNECT_TIMEOUT_MS = 15000;
+const int WIFI_RECONNECT_INTERVAL_MS = 3000;
+const int NO_API_KEY_LOG_MS = 5000;
 // -----------------------------------------------------
 
 float ecgChunk[CHUNK_SIZE];
 int chunkIndex = 0;
 unsigned long lastHeartbeat = 0;
 unsigned long nextSampleMicros = 0;
+unsigned long lastDebugPrint = 0;
+unsigned long lastWifiReconnectAttempt = 0;
+unsigned long lastNoApiKeyLog = 0;
 String runtimeApiKey = "";
+
+bool hasValidEnrollmentKey() {
+  return String(DEVICE_ENROLLMENT_KEY) != "SET_DEVICE_ENROLLMENT_KEY";
+}
 
 float normalizeSample(int raw) {
   // Convert ADC 0..4095 to approximately -1.0..1.0
@@ -31,20 +44,56 @@ float normalizeSample(int raw) {
 }
 
 bool sensorConnected() {
-  pinMode(LO_PLUS_PIN, INPUT);
-  pinMode(LO_MINUS_PIN, INPUT);
   int loPlus = digitalRead(LO_PLUS_PIN);
   int loMinus = digitalRead(LO_MINUS_PIN);
   // AD8232 lead-off pins HIGH generally indicate disconnected electrodes
   return !(loPlus == HIGH || loMinus == HIGH);
 }
 
-void connectWifi() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(400);
+void debugPrintSample(int raw, float normalized) {
+  if (!ENABLE_SERIAL_DEBUG) {
+    return;
   }
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastDebugPrint < DEBUG_PRINT_MS) {
+    return;
+  }
+
+  lastDebugPrint = nowMs;
+  int loPlus = digitalRead(LO_PLUS_PIN);
+  int loMinus = digitalRead(LO_MINUS_PIN);
+  Serial.print("raw=");
+  Serial.print(raw);
+  Serial.print(" normalized=");
+  Serial.print(normalized, 4);
+  Serial.print(" LO+=");
+  Serial.print(loPlus);
+  Serial.print(" LO-=");
+  Serial.print(loMinus);
+  Serial.print(" wifi=");
+  Serial.println(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected");
+}
+
+bool connectWifi() {
+  WiFi.mode(WIFI_STA);
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+  }
+
+  unsigned long startMs = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startMs < WIFI_CONNECT_TIMEOUT_MS) {
+    if (ENABLE_SERIAL_DEBUG) {
+      Serial.println("Connecting to WiFi...");
+    }
+    delay(WIFI_RETRY_DELAY_MS);
+  }
+
+  bool connected = WiFi.status() == WL_CONNECTED;
+  if (ENABLE_SERIAL_DEBUG) {
+    Serial.println(connected ? "WiFi connected" : "WiFi connect timeout");
+  }
+  return connected;
 }
 
 bool postJson(const String& url, const String& payload, String* responseBody = nullptr, int* statusCode = nullptr) {
@@ -61,6 +110,13 @@ bool postJson(const String& url, const String& payload, String* responseBody = n
 }
 
 void sendHeartbeat() {
+  if (runtimeApiKey.length() == 0 && !hasValidEnrollmentKey()) {
+    if (ENABLE_SERIAL_DEBUG) {
+      Serial.println("Enrollment key is still placeholder. Set DEVICE_ENROLLMENT_KEY first.");
+    }
+    return;
+  }
+
   StaticJsonDocument<384> doc;
   doc["device_id"] = DEVICE_ID;
   if (runtimeApiKey.length() > 0) {
@@ -80,20 +136,46 @@ void sendHeartbeat() {
   String response;
   int code = 0;
   if (!postJson(String(API_BASE) + "/api/devices/heartbeat", body, &response, &code)) {
+    if (ENABLE_SERIAL_DEBUG) {
+      Serial.print("Heartbeat failed, HTTP ");
+      Serial.println(code);
+      if (response.length() > 0) {
+        Serial.print("Heartbeat error body: ");
+        Serial.println(response);
+      }
+    }
     return;
   }
 
+  if (ENABLE_SERIAL_DEBUG) {
+    Serial.print("Heartbeat OK, HTTP ");
+    Serial.println(code);
+  }
+
   StaticJsonDocument<256> resDoc;
-  if (deserializeJson(resDoc, response) == DeserializationError::Ok) {
+  DeserializationError parseErr = deserializeJson(resDoc, response);
+  if (parseErr == DeserializationError::Ok) {
     const char* apiKey = resDoc["api_key"] | "";
     if (strlen(apiKey) > 0) {
       runtimeApiKey = String(apiKey);
+      if (ENABLE_SERIAL_DEBUG) {
+        Serial.println("api_key received from heartbeat.");
+      }
+    } else if (ENABLE_SERIAL_DEBUG) {
+      Serial.println("Heartbeat response has no api_key field.");
     }
+  } else if (ENABLE_SERIAL_DEBUG) {
+    Serial.print("Heartbeat JSON parse error: ");
+    Serial.println(parseErr.c_str());
   }
 }
 
 void sendSensorChunk() {
   if (!sensorConnected() || runtimeApiKey.length() == 0) {
+    if (ENABLE_SERIAL_DEBUG && runtimeApiKey.length() == 0 && millis() - lastNoApiKeyLog >= NO_API_KEY_LOG_MS) {
+      Serial.println("Skipping chunk: api_key not available yet");
+      lastNoApiKeyLog = millis();
+    }
     return;
   }
 
@@ -111,9 +193,24 @@ void sendSensorChunk() {
 
   int code = 0;
   postJson(String(API_BASE) + "/api/sensor/data", body, nullptr, &code);
+  if (ENABLE_SERIAL_DEBUG && (code < 200 || code >= 300)) {
+    Serial.print("Sensor upload failed, HTTP ");
+    Serial.println(code);
+  }
 }
 
 void setup() {
+  if (ENABLE_SERIAL_DEBUG) {
+    Serial.begin(115200);
+    delay(500);
+    Serial.println("CardioSense ESP32 starting...");
+    if (!hasValidEnrollmentKey()) {
+      Serial.println("Set DEVICE_ENROLLMENT_KEY. Current value is placeholder.");
+    }
+  }
+
+  pinMode(LO_PLUS_PIN, INPUT);
+  pinMode(LO_MINUS_PIN, INPUT);
   analogReadResolution(12);
   connectWifi();
   nextSampleMicros = micros();
@@ -121,7 +218,13 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-    connectWifi();
+    unsigned long nowMs = millis();
+    if (nowMs - lastWifiReconnectAttempt >= WIFI_RECONNECT_INTERVAL_MS) {
+      connectWifi();
+      lastWifiReconnectAttempt = nowMs;
+    }
+    delay(10);
+    return;
   }
 
   unsigned long nowMs = millis();
@@ -135,7 +238,9 @@ void loop() {
 
   if ((long)(nowUs - nextSampleMicros) >= 0) {
     int raw = analogRead(ECG_PIN);
-    ecgChunk[chunkIndex++] = normalizeSample(raw);
+    float normalized = normalizeSample(raw);
+    ecgChunk[chunkIndex++] = normalized;
+    debugPrintSample(raw, normalized);
     nextSampleMicros += sampleIntervalUs;
 
     if (chunkIndex >= CHUNK_SIZE) {

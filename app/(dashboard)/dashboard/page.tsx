@@ -8,14 +8,17 @@ import { RiskGauge } from "@/components/charts/RiskGauge";
 import { HeartRateTrend, HRVBarChart } from "@/components/charts/HRVChart";
 import { useCardioStore } from "@/lib/store";
 import { useAuth } from "@/lib/useAuth";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function DashboardPage() {
   useAuth();
   const bpm = useCardioStore((s) => s.bpm);
   const ecg = useCardioStore((s) => s.ecgBuffer);
+  const pushECG = useCardioStore((s) => s.pushECG);
+  const setBpm = useCardioStore((s) => s.setBpm);
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const lastLiveTsRef = useRef<number>(0);
 
   useEffect(() => {
     fetch("/api/user/profile")
@@ -25,6 +28,51 @@ export default function DashboardPage() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (!alive || inFlight) return;
+      inFlight = true;
+      try {
+        const url = `/api/ecg/live?after_ts=${lastLiveTsRef.current}`;
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) return;
+
+        const payload = await res.json();
+        const chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
+        for (const c of chunks) {
+          if (Array.isArray(c.signal) && c.signal.length) {
+            pushECG(c.signal);
+          }
+          if (typeof c.bpm === "number" && c.bpm > 0) {
+            setBpm(c.bpm);
+          }
+          if (typeof c.ts === "number" && c.ts > lastLiveTsRef.current) {
+            lastLiveTsRef.current = c.ts;
+          }
+        }
+
+        if (typeof payload?.latest_ts === "number" && payload.latest_ts > lastLiveTsRef.current) {
+          lastLiveTsRef.current = payload.latest_ts;
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const timer = setInterval(() => {
+      void poll();
+    }, 700);
+    void poll();
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [pushECG, setBpm]);
 
   // Show loading or empty state for new users
   if (loading) return <div className="p-8 text-center text-slate-400">Loading dashboard...</div>;
