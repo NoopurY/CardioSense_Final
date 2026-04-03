@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const afterTsRaw = Number(url.searchParams.get("after_ts") ?? "0");
   const afterTs = Number.isFinite(afterTsRaw) && afterTsRaw > 0 ? afterTsRaw : 0;
 
-  const activeDevice = await DeviceModel.findOne({ userId: auth.sub, isActive: true })
+  const activeDevice = await DeviceModel.findOne<{ _id: unknown }>({ userId: auth.sub, isActive: true })
     .sort({ updatedAt: -1 })
     .select({ _id: 1 })
     .lean();
