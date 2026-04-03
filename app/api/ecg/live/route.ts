@@ -1,6 +1,6 @@
 import { fail, ok, requireUser } from "@/lib/server/http";
 import { connectMongo } from "@/lib/server/mongodb";
-import { ECGRecordModel } from "@/lib/server/models";
+import { DeviceModel, ECGRecordModel } from "@/lib/server/models";
 
 export async function GET(request: Request) {
   await connectMongo();
@@ -11,7 +11,20 @@ export async function GET(request: Request) {
   const afterTsRaw = Number(url.searchParams.get("after_ts") ?? "0");
   const afterTs = Number.isFinite(afterTsRaw) && afterTsRaw > 0 ? afterTsRaw : 0;
 
-  const query: Record<string, unknown> = { userId: auth.sub, source: "sensor" };
+  const activeDevice = await DeviceModel.findOne({ userId: auth.sub, isActive: true })
+    .sort({ updatedAt: -1 })
+    .select({ _id: 1 })
+    .lean();
+
+  if (!activeDevice?._id) {
+    return ok({ chunks: [], latest_ts: afterTs });
+  }
+
+  const query: Record<string, unknown> = {
+    userId: auth.sub,
+    deviceId: activeDevice._id,
+    source: "sensor",
+  };
   if (afterTs > 0) {
     query.recordedAt = { $gt: new Date(afterTs) };
   }

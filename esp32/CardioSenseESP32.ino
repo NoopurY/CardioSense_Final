@@ -23,6 +23,9 @@ const int WIFI_RETRY_DELAY_MS = 400;
 const int WIFI_CONNECT_TIMEOUT_MS = 15000;
 const int WIFI_RECONNECT_INTERVAL_MS = 3000;
 const int NO_API_KEY_LOG_MS = 5000;
+const float ECG_BASELINE_ALPHA = 0.008f;
+const float ECG_GAIN = 4.0f;
+const float ECG_CLIP = 1.8f;
 // -----------------------------------------------------
 
 float ecgChunk[CHUNK_SIZE];
@@ -32,15 +35,30 @@ unsigned long nextSampleMicros = 0;
 unsigned long lastDebugPrint = 0;
 unsigned long lastWifiReconnectAttempt = 0;
 unsigned long lastNoApiKeyLog = 0;
+unsigned long lastUploadOkLog = 0;
+unsigned long uploadOkCount = 0;
 String runtimeApiKey = "";
+bool baselineInitialized = false;
+float baselineEma = 0.0f;
 
 bool hasValidEnrollmentKey() {
   return String(DEVICE_ENROLLMENT_KEY) != "SET_DEVICE_ENROLLMENT_KEY";
 }
 
 float normalizeSample(int raw) {
-  // Convert ADC 0..4095 to approximately -1.0..1.0
-  return ((float)raw - 2048.0f) / 2048.0f;
+  // Keep waveform real by only removing DC baseline and applying linear gain.
+  if (!baselineInitialized) {
+    baselineEma = (float)raw;
+    baselineInitialized = true;
+  }
+
+  baselineEma += ECG_BASELINE_ALPHA * ((float)raw - baselineEma);
+  float centered = ((float)raw - baselineEma) / 2048.0f;
+  float amplified = centered * ECG_GAIN;
+
+  if (amplified > ECG_CLIP) return ECG_CLIP;
+  if (amplified < -ECG_CLIP) return -ECG_CLIP;
+  return amplified;
 }
 
 bool sensorConnected() {
@@ -193,6 +211,14 @@ void sendSensorChunk() {
 
   int code = 0;
   postJson(String(API_BASE) + "/api/sensor/data", body, nullptr, &code);
+  if (code >= 200 && code < 300) {
+    uploadOkCount += 1;
+    if (ENABLE_SERIAL_DEBUG && millis() - lastUploadOkLog >= 5000) {
+      Serial.print("Sensor upload OK count=");
+      Serial.println(uploadOkCount);
+      lastUploadOkLog = millis();
+    }
+  }
   if (ENABLE_SERIAL_DEBUG && (code < 200 || code >= 300)) {
     Serial.print("Sensor upload failed, HTTP ");
     Serial.println(code);

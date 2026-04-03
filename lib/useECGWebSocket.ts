@@ -15,7 +15,7 @@ export function useECGWebSocket(deviceId: string) {
     const baseUrl = process.env.NEXT_PUBLIC_WS_URL ?? inferred;
 
     const connect = () => {
-      wsRef.current = new WebSocket(`${baseUrl}/ws/ecg/${deviceId}`);
+      wsRef.current = new WebSocket(`${baseUrl}/api/ws/ecg/${deviceId}`);
 
       wsRef.current.onmessage = (evt) => {
         const msg = JSON.parse(evt.data);
