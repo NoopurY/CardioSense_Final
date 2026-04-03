@@ -3,6 +3,28 @@ import { fail, ok } from "@/lib/server/http";
 import { connectMongo } from "@/lib/server/mongodb";
 import { DeviceModel, ECGRecordModel, PredictionModel } from "@/lib/server/models";
 
+function processSignal(signal: number[]) {
+  if (!signal.length) return [];
+
+  const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
+  const centered = signal.map((v) => v - mean);
+
+  // Lightweight smoothing on backend for stable UI rendering from real sensor chunks.
+  const alpha = 0.22;
+  let state = centered[0] ?? 0;
+  const smoothed = centered.map((v) => {
+    state += alpha * (v - state);
+    return state;
+  });
+
+  // Normalize amplitude based on current chunk's peak-to-peak range.
+  const min = Math.min(...smoothed);
+  const max = Math.max(...smoothed);
+  const p2p = Math.max(max - min, 1e-6);
+  const scale = 1.0 / p2p;
+  return smoothed.map((v) => Math.max(-1.5, Math.min(1.5, v * scale * 2.0)));
+}
+
 function estimateBpm(signal: number[], samplingRate: number) {
   if (!signal.length || samplingRate <= 0) return 0;
 
@@ -47,6 +69,8 @@ export async function POST(request: Request) {
   if (signal.length !== 60) return fail("Signal chunk must contain exactly 60 samples", 400);
   if (signal.some((v: number) => Number.isNaN(v) || !Number.isFinite(v))) return fail("Signal contains invalid samples", 400);
 
+  const processedSignal = processSignal(signal);
+
   const avg = signal.reduce((a, b) => a + b, 0) / signal.length;
   const min = Math.min(...signal);
   const max = Math.max(...signal);
@@ -64,9 +88,10 @@ export async function POST(request: Request) {
     maxHr: bpm > 0 ? Math.min(210, bpm + 6) : null,
     source: "sensor" as const,
     signal,
+    processedSignal,
   });
 
-  const ml = inferArrhythmia(signal);
+  const ml = inferArrhythmia(processedSignal.length ? processedSignal : signal);
   const prediction = await PredictionModel.create({
     ecgRecordId: rec._id,
     predictedAt: new Date(),

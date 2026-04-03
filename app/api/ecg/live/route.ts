@@ -32,14 +32,18 @@ export async function GET(request: Request) {
   const rows = await ECGRecordModel.find(query)
     .sort({ recordedAt: 1 })
     .limit(24)
-    .select({ signal: 1, avgHeartRate: 1, recordedAt: 1 })
+    .select({ signal: 1, processedSignal: 1, avgHeartRate: 1, recordedAt: 1 })
     .lean();
 
   const chunks = rows.map((r: any) => ({
     id: String(r._id),
     ts: r.recordedAt ? new Date(r.recordedAt).getTime() : Date.now(),
     bpm: Number(r.avgHeartRate ?? 0),
-    signal: Array.isArray(r.signal) ? r.signal.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n)) : [],
+    signal: Array.isArray(r.processedSignal) && r.processedSignal.length
+      ? r.processedSignal.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n))
+      : Array.isArray(r.signal)
+        ? r.signal.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n))
+        : [],
   }));
 
   const latestTs = chunks.length ? chunks[chunks.length - 1].ts : afterTs;

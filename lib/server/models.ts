@@ -48,6 +48,7 @@ const ECGRecordSchema = new Schema(
     maxHr: Number,
     source: { type: String, enum: ["upload", "sensor", "simulated"], required: true },
     signal: { type: [Number], default: [] },
+    processedSignal: { type: [Number], default: [] },
   },
   { timestamps: true },
 );
