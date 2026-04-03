@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { Button } from "@/components/ui/Button";
 import { LiveECGChart } from "@/components/charts/LiveECGChart";
@@ -8,10 +8,15 @@ import { NormalDistributionChart, PoissonChart } from "@/components/charts/Distr
 import { CorrelationPlot } from "@/components/charts/CorrelationPlot";
 import { RegressionPlot } from "@/components/stats/RegressionPlot";
 import { BayesWidget } from "@/components/stats/BayesWidget";
+import { useCardioStore } from "@/lib/store";
 
 export default function AnalysisPage() {
   const [signal, setSignal] = useState<number[]>([]);
   const [analyzed, setAnalyzed] = useState(false);
+  const [sourceMode, setSourceMode] = useState<"live" | "simulated">("live");
+  const pushECG = useCardioStore((s) => s.pushECG);
+  const storeSignal = useCardioStore((s) => s.ecgBuffer);
+  const lastLiveTsRef = useRef<number>(0);
 
   const features = useMemo(
     () => [
@@ -28,8 +33,51 @@ export default function AnalysisPage() {
   const simulate = () => {
     const arr = Array.from({ length: 420 }, (_, i) => Math.sin(i / 9) * 0.35 + (i % 55 === 0 ? 0.9 : 0) + Math.random() * 0.05);
     setSignal(arr);
+    setSourceMode("simulated");
     setAnalyzed(false);
   };
+
+  useEffect(() => {
+    let alive = true;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (!alive || inFlight) return;
+      inFlight = true;
+      try {
+        const url = `/api/ecg/live?after_ts=${lastLiveTsRef.current}`;
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) return;
+
+        const payload = await res.json();
+        const chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
+        for (const c of chunks) {
+          if (Array.isArray(c.signal) && c.signal.length) {
+            pushECG(c.signal);
+          }
+          if (typeof c.ts === "number" && c.ts > lastLiveTsRef.current) {
+            lastLiveTsRef.current = c.ts;
+          }
+        }
+
+        if (typeof payload?.latest_ts === "number" && payload.latest_ts > lastLiveTsRef.current) {
+          lastLiveTsRef.current = payload.latest_ts;
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const timer = setInterval(() => {
+      void poll();
+    }, 700);
+    void poll();
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [pushECG]);
 
   return (
     <div className="space-y-4">
@@ -41,6 +89,7 @@ export default function AnalysisPage() {
           </label>
           <div className="flex items-end gap-2">
             <Button onClick={simulate}>Simulate ECG</Button>
+            <Button variant="ghost" onClick={() => setSourceMode("live")}>Use Live Stream</Button>
             <Button variant="ghost" onClick={() => setAnalyzed(true)}>
               Run AI Analysis
             </Button>
@@ -49,7 +98,7 @@ export default function AnalysisPage() {
       </Panel>
 
       <Panel title="Waveform Viewer" subtitle="Zoomable ECG with R-peaks">
-        <LiveECGChart points={signal} />
+        <LiveECGChart points={sourceMode === "live" ? storeSignal : signal} />
       </Panel>
 
       <div className="grid gap-4 md:grid-cols-2">
