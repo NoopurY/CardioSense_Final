@@ -19,6 +19,21 @@ Optional values:
 
 - MONGODB_DB (defaults to cardiosense)
 - CORS_ORIGINS
+- ML_SERVICE_URL (defaults to local fallback if not set)
+
+## ML service (optional, recommended)
+
+Run Python ML API on port 8000:
+
+1. `cd ../ml_model`
+2. `python -m venv .venv`
+3. `.venv\\Scripts\\activate`
+4. `pip install -r requirements.txt`
+5. `python service.py`
+
+Then set `ML_SERVICE_URL=http://localhost:8000` in `frontend/.env.local`.
+
+`service.py` runs in fallback mode if scientific dependencies/model are unavailable.
 
 ## Useful docs
 

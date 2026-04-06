@@ -1,4 +1,4 @@
-import { inferArrhythmia } from "@/lib/server/ml";
+import { inferArrhythmiaRemote } from "@/lib/server/ml";
 import { fail, ok, requireUser } from "@/lib/server/http";
 import { connectMongo } from "@/lib/server/mongodb";
 import { ECGRecordModel, PredictionModel } from "@/lib/server/models";
@@ -11,11 +11,12 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
 
   const record = await ECGRecordModel.findOne({ _id: id, userId: auth.sub });
   if (!record) return fail("Record not found", 404);
+  const inference = await inferArrhythmiaRemote(record.signal);
 
   const prediction = await PredictionModel.create({
     ecgRecordId: record._id,
     predictedAt: new Date(),
-    ...inferArrhythmia(record.signal),
+    ...inference,
   });
   return ok(prediction);
 }
