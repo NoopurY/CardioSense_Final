@@ -45,6 +45,7 @@ export default function AnalysisPage() {
   const [selectedFileName, setSelectedFileName] = useState<string>("");
   const [uploadedSignal, setUploadedSignal] = useState<number[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [statusText, setStatusText] = useState("Upload a CSV file and click Run Analysis.");
   const [errorText, setErrorText] = useState<string | null>(null);
 
@@ -261,15 +262,12 @@ export default function AnalysisPage() {
     return points;
   }, [uploadedSignal]);
 
-  const featureSnapshot = useMemo(() => {
+  const keyMeasurements = useMemo(() => {
     if (!uploadedSignal.length) {
       return [
-        ["R-peak density", "--"],
         ["Signal mean", "--"],
         ["Signal RMS", "--"],
         ["Peak-to-peak", "--"],
-        ["Estimated BPM", "--"],
-        ["SNR", "--"],
       ];
     }
 
@@ -281,40 +279,30 @@ export default function AnalysisPage() {
     const max = Math.max(...window);
     const p2p = max - min;
 
-    let peaks = 0;
-    for (let i = 1; i < window.length - 1; i++) {
-      if (window[i] > window[i - 1] && window[i] >= window[i + 1] && window[i] > mean + 0.25 * Math.max(quality.amplitude ?? 0, 0.01)) {
-        peaks += 1;
-      }
-    }
-    const peakDensity = peaks / Math.max(1, window.length);
-
     return [
-      ["R-peak density", peakDensity.toFixed(3)],
       ["Signal mean", mean.toFixed(4)],
       ["Signal RMS", rms.toFixed(4)],
       ["Peak-to-peak", p2p.toFixed(4)],
-      ["Estimated BPM", uploadedBpm != null && uploadedBpm > 0 ? String(uploadedBpm) : "--"],
-      ["SNR", quality.snrDb == null ? "--" : `${quality.snrDb.toFixed(1)} dB`],
     ];
-  }, [uploadedSignal, uploadedBpm, quality.amplitude, quality.snrDb]);
+  }, [uploadedSignal]);
 
   return (
-    <div className="space-y-4">
-      <Panel title="ECG Analysis Workbench" subtitle="CSV-only workflow for upload and AI analysis">
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="rounded-xl border border-dashed border-cyan-500/50 bg-[#041a2e] p-5 text-sm text-slate-300">
-            Upload ECG CSV file
-            <input className="mt-3 block text-xs" type="file" accept=".csv,text/csv" onChange={handleCsvSelection} />
-            <p className="mt-2 text-xs text-slate-400">Reads numeric samples from CSV rows and analyzes the uploaded signal only.</p>
+    <div className="space-y-5">
+      <Panel title="ECG Analysis" subtitle="Clean upload and quick interpretation">
+        <div className="grid gap-4 md:grid-cols-[1.25fr,1fr]">
+          <label className="rounded-2xl border border-cyan-700/40 bg-linear-to-b from-[#07233a] to-[#041a2e] p-6 text-sm text-slate-200">
+            <p className="text-base font-medium text-cyan-200">Upload CSV</p>
+            <p className="mt-1 text-xs text-slate-400">Use plain numeric ECG values. Minimum 12 points.</p>
+            <input className="mt-4 block text-xs" type="file" accept=".csv,text/csv" onChange={handleCsvSelection} />
           </label>
-          <div className="flex flex-col justify-end gap-2">
+
+          <div className="rounded-2xl border border-slate-700 bg-[#07192a] p-5">
             <Button onClick={() => void runAnalysis()} disabled={uploadedSignal.length < 12 || isRunning}>
               {isRunning ? "Running Analysis..." : "Run Analysis"}
             </Button>
-            <p className="text-xs text-slate-400">{selectedFileName ? `Selected: ${selectedFileName}` : "No file selected"}</p>
-            <p className="text-xs text-slate-400">{statusText}</p>
-            {errorText ? <p className="text-xs text-rose-300">{errorText}</p> : null}
+            <p className="mt-3 text-xs text-slate-400">{selectedFileName ? `Selected: ${selectedFileName}` : "No file selected"}</p>
+            <p className="mt-1 text-xs text-slate-400">{statusText}</p>
+            {errorText ? <p className="mt-2 text-xs text-rose-300">{errorText}</p> : null}
           </div>
         </div>
       </Panel>
@@ -328,11 +316,11 @@ export default function AnalysisPage() {
           <div className="space-y-3 text-sm text-slate-300">
             <div>
               <p>Estimated BPM: <span className="mono-data">{uploadedBpm ?? "--"}</span></p>
-              <p className="text-xs text-slate-400">{uploadedBpm == null ? "Need more data to estimate heart rate." : uploadedBpm < 50 ? "Heart rate looks slow." : uploadedBpm > 110 ? "Heart rate looks fast." : "Heart rate is in a normal range."}</p>
+              <p className="text-xs text-slate-400">{uploadedBpm == null ? "Need more data to estimate heart rate." : uploadedBpm < 50 ? "Heart rate is lower than usual." : uploadedBpm > 110 ? "Heart rate is higher than usual." : "Heart rate looks normal."}</p>
             </div>
             <div>
               <p>SNR: <span className="mono-data">{quality.snrDb == null ? "--" : `${quality.snrDb.toFixed(1)} dB`}</span></p>
-              <p className="text-xs text-slate-400">{quality.snrDb == null ? "No signal quality score yet." : quality.snrDb >= 15 ? "Signal is clean." : quality.snrDb >= 8 ? "Signal is usable but a bit noisy." : "Signal is noisy; result confidence may drop."}</p>
+              <p className="text-xs text-slate-400">{quality.snrDb == null ? "No signal quality score yet." : quality.snrDb >= 15 ? "Signal is clean." : quality.snrDb >= 8 ? "Signal is okay but has noise." : "Signal is noisy, so confidence can drop."}</p>
             </div>
             <div>
               <p>Baseline Wander: <span className="mono-data">{quality.baseline}</span></p>
@@ -370,28 +358,36 @@ export default function AnalysisPage() {
         </Panel>
       </div>
 
-      <Panel title="Feature Snapshot (Uploaded Signal)">
-        <div className="grid gap-2 md:grid-cols-3">
-          {featureSnapshot.map(([k, v]) => (
-            <div key={k} className="rounded-lg border border-slate-700 px-3 py-2 text-sm">
-              <p className="text-slate-300">{k}</p>
-              <p className="mono-data text-xl">{v}</p>
-            </div>
+      <Panel title="Key Measurements" subtitle="Only the most important signal values">
+        <div className="grid gap-3 md:grid-cols-3">
+          {keyMeasurements.map(([k, v]) => (
+            <article key={k} className="rounded-xl border border-slate-700/80 bg-[#07192a] px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-slate-400">{k}</p>
+              <p className="mono-data mt-1 text-2xl text-cyan-100">{v}</p>
+            </article>
           ))}
         </div>
       </Panel>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Panel title="Normal Distribution (Uploaded CSV)">
-          <NormalDistributionChart data={normalChartData} />
-        </Panel>
-        <Panel title="Poisson Event Estimate (Uploaded CSV)">
-          <PoissonChart data={poissonChartData} />
-        </Panel>
-        <Panel title="Correlation (Uploaded CSV)">
-          <CorrelationPlot data={correlationData} />
-        </Panel>
+      <div className="flex justify-end">
+        <Button variant="ghost" onClick={() => setShowAdvanced((prev) => !prev)}>
+          {showAdvanced ? "Hide Advanced Charts" : "Show Advanced Charts"}
+        </Button>
       </div>
+
+      {showAdvanced ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Panel title="Normal Distribution (Uploaded CSV)">
+            <NormalDistributionChart data={normalChartData} />
+          </Panel>
+          <Panel title="Poisson Event Estimate (Uploaded CSV)">
+            <PoissonChart data={poissonChartData} />
+          </Panel>
+          <Panel title="Correlation (Uploaded CSV)">
+            <CorrelationPlot data={correlationData} />
+          </Panel>
+        </div>
+      ) : null}
     </div>
   );
 }
