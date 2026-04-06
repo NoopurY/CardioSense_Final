@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/Button";
 import { LiveECGChart } from "@/components/charts/LiveECGChart";
 import { NormalDistributionChart, PoissonChart } from "@/components/charts/DistributionChart";
 import { CorrelationPlot } from "@/components/charts/CorrelationPlot";
-import { RegressionPlot } from "@/components/stats/RegressionPlot";
 import { api } from "@/lib/api";
 
 type LatestPrediction = {
@@ -168,6 +167,100 @@ export default function AnalysisPage() {
     return { snrDb, baseline, noise, amplitude };
   }, [uploadedSignal]);
 
+  const normalChartData = useMemo(() => {
+    if (uploadedSignal.length < 12) return [] as Array<{ x: number; p: number }>;
+
+    const window = uploadedSignal.slice(-360);
+    const n = window.length;
+    if (!n) return [];
+
+    const min = Math.min(...window);
+    const max = Math.max(...window);
+    const bins = 12;
+    const span = Math.max(max - min, 1e-6);
+    const width = span / bins;
+    const counts = new Array(bins).fill(0);
+
+    for (const value of window) {
+      const raw = Math.floor((value - min) / width);
+      const idx = Math.min(bins - 1, Math.max(0, raw));
+      counts[idx] += 1;
+    }
+
+    return counts.map((count, i) => ({
+      x: Number((min + width * (i + 0.5)).toFixed(3)),
+      p: Number((count / n).toFixed(4)),
+    }));
+  }, [uploadedSignal]);
+
+  const poissonChartData = useMemo(() => {
+    if (uploadedSignal.length < 12) return [] as Array<{ k: number; p: number }>;
+
+    const window = uploadedSignal.slice(-360);
+    const mean = window.reduce((a, b) => a + b, 0) / Math.max(1, window.length);
+    const max = Math.max(...window);
+    const threshold = mean + 0.25 * Math.max(max - mean, 0.01);
+
+    let peaks = 0;
+    for (let i = 1; i < window.length - 1; i++) {
+      if (window[i] > window[i - 1] && window[i] >= window[i + 1] && window[i] > threshold) {
+        peaks += 1;
+      }
+    }
+
+    const seconds = window.length / 360;
+    const lambda = Math.max(0.05, peaks / Math.max(seconds, 1e-6));
+    const kMax = Math.max(4, Math.min(10, Math.ceil(lambda + 3 * Math.sqrt(lambda))));
+
+    const fact = (n: number): number => {
+      let result = 1;
+      for (let i = 2; i <= n; i++) result *= i;
+      return result;
+    };
+
+    const points: Array<{ k: number; p: number }> = [];
+    for (let k = 0; k <= kMax; k++) {
+      const p = (Math.exp(-lambda) * lambda ** k) / fact(k);
+      points.push({ k, p: Number(p.toFixed(4)) });
+    }
+
+    return points;
+  }, [uploadedSignal]);
+
+  const correlationData = useMemo(() => {
+    if (uploadedSignal.length < 60) return [] as Array<{ x: number; y: number }>;
+
+    const window = uploadedSignal.slice(-360);
+    const chunkSize = 30;
+    const points: Array<{ x: number; y: number }> = [];
+
+    for (let start = 0; start + chunkSize <= window.length; start += chunkSize) {
+      const chunk = window.slice(start, start + chunkSize);
+      const chunkMean = chunk.reduce((a, b) => a + b, 0) / chunk.length;
+      const chunkMax = Math.max(...chunk);
+      const threshold = chunkMean + 0.25 * Math.max(chunkMax - chunkMean, 0.01);
+
+      let peaks = 0;
+      for (let i = 1; i < chunk.length - 1; i++) {
+        if (chunk[i] > chunk[i - 1] && chunk[i] >= chunk[i + 1] && chunk[i] > threshold) {
+          peaks += 1;
+        }
+      }
+
+      const seconds = chunk.length / 360;
+      const bpmProxy = (peaks / Math.max(seconds, 1e-6)) * 60;
+      const variance = chunk.reduce((acc, value) => acc + (value - chunkMean) ** 2, 0) / chunk.length;
+      const variability = Math.sqrt(variance) * 1000;
+
+      points.push({
+        x: Number(bpmProxy.toFixed(1)),
+        y: Number(variability.toFixed(1)),
+      });
+    }
+
+    return points;
+  }, [uploadedSignal]);
+
   const featureSnapshot = useMemo(() => {
     if (!uploadedSignal.length) {
       return [
@@ -206,78 +299,6 @@ export default function AnalysisPage() {
     ];
   }, [uploadedSignal, uploadedBpm, quality.amplitude, quality.snrDb]);
 
-  const analysisInsights = useMemo(() => {
-    const snr = quality.snrDb;
-    const amplitude = quality.amplitude;
-    const bpm = uploadedBpm;
-
-    const bpmState =
-      bpm == null ? "No estimate" : bpm < 50 || bpm > 110 ? "Out of expected range" : bpm < 60 || bpm > 100 ? "Borderline" : "Within expected range";
-    const bpmDetail =
-      bpm == null
-        ? "Upload a clearer or longer signal to estimate heart rate."
-        : bpm < 50
-          ? "Bradycardic trend detected. Consider checking lead placement and symptoms."
-          : bpm > 110
-            ? "Tachycardic trend detected. Verify rhythm quality and repeat capture if needed."
-            : "Heart rate estimate appears stable for this segment.";
-
-    const snrState = snr == null ? "Unknown" : snr >= 15 ? "Clean signal" : snr >= 8 ? "Moderate noise" : "High noise";
-    const snrDetail =
-      snr == null
-        ? "SNR will appear after a valid upload."
-        : snr >= 15
-          ? "Waveform is clear enough for reliable morphology interpretation."
-          : snr >= 8
-            ? "Signal is usable but noisy. Re-capturing may improve confidence."
-            : "Noise is high and may affect prediction reliability.";
-
-    const ampState = amplitude == null ? "Unknown" : amplitude >= 0.55 ? "Strong morphology" : amplitude >= 0.25 ? "Moderate morphology" : "Low morphology";
-    const ampDetail =
-      amplitude == null
-        ? "Peak-to-peak amplitude appears after upload."
-        : amplitude >= 0.55
-          ? "Distinct peaks are present, which helps R-peak detection."
-          : amplitude >= 0.25
-            ? "Beat shape is visible but may benefit from better electrode contact."
-            : "Low waveform amplitude detected. Check sensor contact and baseline drift.";
-
-    const baselineState = quality.baseline === "Stable" ? "Good baseline" : quality.baseline === "Mild drift" ? "Watch baseline" : "Baseline issue";
-    const baselineDetail =
-      quality.baseline === "Stable"
-        ? "Minimal baseline wander."
-        : quality.baseline === "Mild drift"
-          ? "Some baseline movement is present; filtering may help."
-          : "Large baseline drift may distort ST/T interpretation.";
-
-    return [
-      {
-        title: "Heart Rate Interpretation",
-        value: bpm == null ? "--" : `${bpm} bpm`,
-        state: bpmState,
-        detail: bpmDetail,
-      },
-      {
-        title: "Signal Quality (SNR)",
-        value: snr == null ? "--" : `${snr.toFixed(1)} dB`,
-        state: snrState,
-        detail: snrDetail,
-      },
-      {
-        title: "Morphology Amplitude",
-        value: amplitude == null ? "--" : amplitude.toFixed(3),
-        state: ampState,
-        detail: ampDetail,
-      },
-      {
-        title: "Baseline Stability",
-        value: quality.baseline,
-        state: baselineState,
-        detail: baselineDetail,
-      },
-    ];
-  }, [quality.amplitude, quality.baseline, quality.snrDb, uploadedBpm]);
-
   return (
     <div className="space-y-4">
       <Panel title="ECG Analysis Workbench" subtitle="CSV-only workflow for upload and AI analysis">
@@ -304,18 +325,44 @@ export default function AnalysisPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Panel title="Signal Quality (Uploaded CSV)">
-          <p className="text-sm text-slate-300">Estimated BPM: <span className="mono-data">{uploadedBpm ?? "--"}</span></p>
-          <p className="text-sm text-slate-300">SNR: <span className="mono-data">{quality.snrDb == null ? "--" : `${quality.snrDb.toFixed(1)} dB`}</span></p>
-          <p className="text-sm text-slate-300">Baseline Wander: <span className="mono-data">{quality.baseline}</span></p>
-          <p className="text-sm text-slate-300">Noise Level: <span className="mono-data">{quality.noise == null ? "--" : quality.noise.toFixed(4)}</span></p>
-          <p className="text-sm text-slate-300">Peak-to-Peak: <span className="mono-data">{quality.amplitude == null ? "--" : quality.amplitude.toFixed(3)}</span></p>
+          <div className="space-y-3 text-sm text-slate-300">
+            <div>
+              <p>Estimated BPM: <span className="mono-data">{uploadedBpm ?? "--"}</span></p>
+              <p className="text-xs text-slate-400">{uploadedBpm == null ? "Need more data to estimate heart rate." : uploadedBpm < 50 ? "Heart rate looks slow." : uploadedBpm > 110 ? "Heart rate looks fast." : "Heart rate is in a normal range."}</p>
+            </div>
+            <div>
+              <p>SNR: <span className="mono-data">{quality.snrDb == null ? "--" : `${quality.snrDb.toFixed(1)} dB`}</span></p>
+              <p className="text-xs text-slate-400">{quality.snrDb == null ? "No signal quality score yet." : quality.snrDb >= 15 ? "Signal is clean." : quality.snrDb >= 8 ? "Signal is usable but a bit noisy." : "Signal is noisy; result confidence may drop."}</p>
+            </div>
+            <div>
+              <p>Baseline Wander: <span className="mono-data">{quality.baseline}</span></p>
+              <p className="text-xs text-slate-400">{quality.baseline === "Stable" ? "Baseline looks steady." : quality.baseline === "Mild drift" ? "Small baseline drift is present." : "Large baseline drift detected."}</p>
+            </div>
+            <div>
+              <p>Noise Level: <span className="mono-data">{quality.noise == null ? "--" : quality.noise.toFixed(4)}</span></p>
+              <p className="text-xs text-slate-400">Lower is better. This is a rough beat-to-beat noise estimate.</p>
+            </div>
+            <div>
+              <p>Peak-to-Peak: <span className="mono-data">{quality.amplitude == null ? "--" : quality.amplitude.toFixed(3)}</span></p>
+              <p className="text-xs text-slate-400">{quality.amplitude == null ? "No amplitude value yet." : quality.amplitude >= 0.55 ? "Wave peaks are strong." : quality.amplitude >= 0.25 ? "Wave peaks are moderate." : "Wave peaks are low; check sensor contact."}</p>
+            </div>
+          </div>
         </Panel>
         <Panel title="AI Result">
           {prediction ? (
-            <div className="space-y-1 text-sm text-slate-300">
-              <p>Prediction: <span className="mono-data">{prediction.predictionLabel ?? prediction.arrhythmiaType ?? "--"}</span></p>
-              <p>Confidence: <span className="mono-data">{typeof prediction.confidence === "number" ? `${(prediction.confidence * 100).toFixed(1)}%` : "--"}</span></p>
-              <p>Risk: <span className="mono-data">{typeof prediction.riskScore === "number" ? prediction.riskScore.toFixed(1) : "--"}</span></p>
+            <div className="space-y-3 text-sm text-slate-300">
+              <div>
+                <p>Prediction: <span className="mono-data">{prediction.predictionLabel ?? prediction.arrhythmiaType ?? "--"}</span></p>
+                <p className="text-xs text-slate-400">Simple summary of what the model sees in this uploaded segment.</p>
+              </div>
+              <div>
+                <p>Confidence: <span className="mono-data">{typeof prediction.confidence === "number" ? `${(prediction.confidence * 100).toFixed(1)}%` : "--"}</span></p>
+                <p className="text-xs text-slate-400">Higher means the model is more sure.</p>
+              </div>
+              <div>
+                <p>Risk: <span className="mono-data">{typeof prediction.riskScore === "number" ? prediction.riskScore.toFixed(1) : "--"}</span></p>
+                <p className="text-xs text-slate-400">Closer to 1 means higher risk.</p>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-slate-400">No prediction yet. Upload a CSV and click Run Analysis.</p>
@@ -334,31 +381,15 @@ export default function AnalysisPage() {
         </div>
       </Panel>
 
-      <Panel title="Analysis Interpretation" subtitle="What the uploaded signal metrics indicate">
-        <div className="grid gap-3 md:grid-cols-2">
-          {analysisInsights.map((insight) => (
-            <article key={insight.title} className="rounded-xl border border-slate-700 bg-[#051a2d] px-4 py-3">
-              <p className="text-sm text-cyan-200">{insight.title}</p>
-              <p className="mono-data mt-1 text-2xl">{insight.value}</p>
-              <p className="mt-1 text-xs text-amber-200">{insight.state}</p>
-              <p className="mt-2 text-sm text-slate-300">{insight.detail}</p>
-            </article>
-          ))}
-        </div>
-      </Panel>
-
       <div className="grid gap-4 md:grid-cols-2">
-        <Panel title="Normal Distribution Overlay">
-          <NormalDistributionChart />
+        <Panel title="Normal Distribution (Uploaded CSV)">
+          <NormalDistributionChart data={normalChartData} />
         </Panel>
-        <Panel title="Poisson PVC Frequency">
-          <PoissonChart />
+        <Panel title="Poisson Event Estimate (Uploaded CSV)">
+          <PoissonChart data={poissonChartData} />
         </Panel>
-        <Panel title="Karl Pearson Correlation">
-          <CorrelationPlot />
-        </Panel>
-        <Panel title="Regression Trend + R²">
-          <RegressionPlot />
+        <Panel title="Correlation (Uploaded CSV)">
+          <CorrelationPlot data={correlationData} />
         </Panel>
       </div>
     </div>
