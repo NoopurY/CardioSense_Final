@@ -29,16 +29,13 @@ function parseCsvSignal(text: string): number[] {
     const cols = line.split(/[;,\s]+/).filter(Boolean);
     if (!cols.length) continue;
 
-    let picked: number | null = null;
     for (const col of cols) {
-      const value = Number(col);
+      const cleaned = col.replace(/^['"\[\](){}]+|['"\[\](){}]+$/g, "");
+      const value = Number(cleaned);
       if (Number.isFinite(value)) {
-        picked = value;
-        break;
+        signal.push(value);
       }
     }
-
-    if (picked != null) signal.push(picked);
   }
 
   return signal;
