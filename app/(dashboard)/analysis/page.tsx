@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { isAxiosError } from "axios";
 import { Panel } from "@/components/ui/Panel";
 import { Button } from "@/components/ui/Button";
 import { LiveECGChart } from "@/components/charts/LiveECGChart";
@@ -284,7 +285,18 @@ export default function AnalysisPage() {
       setPrediction(analyzeRes.data ?? null);
       setStatusText("✓ Analysis complete — results ready below.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to run analysis.";
+      let message = error instanceof Error ? error.message : "Failed to run analysis.";
+
+      if (isAxiosError(error)) {
+        if (error.response?.status === 401) {
+          message = "Your session expired. Please log in again.";
+          window.location.href = "/auth/login";
+        } else {
+          const apiError = error.response?.data as { error?: string } | undefined;
+          if (apiError?.error) message = apiError.error;
+        }
+      }
+
       setStatusText("Analysis failed.");
       setErrorText(message);
     } finally {
