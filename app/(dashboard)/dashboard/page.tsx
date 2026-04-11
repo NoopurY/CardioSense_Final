@@ -124,14 +124,15 @@ export default function DashboardPage() {
   if (loading) return <div className="p-8 text-center text-slate-400">Loading dashboard...</div>;
 
   const displayBpm = bpm > 0 ? bpm : profile?.latestBpm ?? null;
-  const displayPrediction = profile?.prediction ?? "No prediction yet";
-  const hasPrediction = typeof profile?.riskScore === "number";
-  const riskGaugeValue = hasPrediction ? profile.riskScore ?? 0 : 0;
   const isDeviceOnline = profile?.deviceStatus === "ESP32 Connected";
+  const displayPrediction = isDeviceOnline ? (profile?.prediction ?? "No prediction yet") : "Waiting for ESP32 stream";
+  const hasPrediction = isDeviceOnline && typeof profile?.riskScore === "number";
+  const riskGaugeValue = hasPrediction ? profile.riskScore ?? 0 : 0;
   const hasFreshChunk = Date.now() - lastChunkAtRef.current <= 4000;
   const hasLiveEcg = isDeviceOnline && hasFreshChunk && ecg.length > 10;
   const liveEcgPoints = hasLiveEcg ? ecg : [];
-  const hasHistory = typeof profile?.latestBpm === "number";
+  const hasHistory = isDeviceOnline && typeof profile?.latestBpm === "number";
+  const displayBpmWhenOnline = isDeviceOnline ? displayBpm : null;
 
   return (
     <div className="grid gap-4 xl:grid-cols-[320px_1fr_320px]">
@@ -151,7 +152,7 @@ export default function DashboardPage() {
           </div>
         </Panel>
         <Panel title="Heart Rate">
-          <p className="glow-text text-4xl">{displayBpm ?? '--'} BPM</p>
+          <p className="glow-text text-4xl">{displayBpmWhenOnline ?? '--'} BPM</p>
           <p className="text-xs text-slate-400">Normal range 60-100</p>
         </Panel>
         <Panel title="HRV">
@@ -174,19 +175,6 @@ export default function DashboardPage() {
         >
           <LiveECGChart points={liveEcgPoints} />
         </Panel>
-        <Panel title="ECG History">
-          <div className="grid gap-2 text-sm">
-            {profile?.ecgHistory?.length ? profile.ecgHistory.map((h) => (
-              <div key={h.label} className="rounded-lg border border-slate-700/70 p-2 text-slate-300">
-                <div className="flex items-center justify-between">
-                  <span>{h.label} Capture Window</span>
-                  <Badge tone="info">{h.status}</Badge>
-                </div>
-                <div className="mt-1 h-6 ecg-line" />
-              </div>
-            )) : <span className="text-slate-500">No ECG history</span>}
-          </div>
-        </Panel>
       </div>
 
       <div className="grid gap-4">
@@ -196,7 +184,9 @@ export default function DashboardPage() {
         </Panel>
         <Panel title="AI Insights">
           <div className="space-y-2 text-sm">
-            {profile?.insights?.length
+            {!isDeviceOnline ? (
+              <span className="text-slate-500">Connect ESP32 to unlock AI insights</span>
+            ) : profile?.insights?.length
               ? profile.insights.map((i: string) => (
                   <div key={i} className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-rose-200">{i}</div>
                 ))
