@@ -14,7 +14,6 @@ export function ensureSeed() {
   if (db.users.length > 0) return;
   const userId = randomUUID();
   const deviceId = randomUUID();
-  const recordId = randomUUID();
 
   db.users.push({
     id: userId,
@@ -36,19 +35,5 @@ export function ensureSeed() {
     lastSeen: new Date().toISOString(),
     isActive: true,
     apiKey: "demo-device-key",
-  });
-
-  db.ecgRecords.push({
-    id: recordId,
-    userId,
-    deviceId,
-    recordedAt: new Date().toISOString(),
-    durationSeconds: 30,
-    samplingRate: 360,
-    avgHeartRate: 82,
-    minHr: 72,
-    maxHr: 101,
-    source: "simulated",
-    signal: Array.from({ length: 360 }, (_, i) => Math.sin(i / 10) * 0.45 + Math.random() * 0.04),
   });
 }

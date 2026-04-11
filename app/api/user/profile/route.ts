@@ -52,7 +52,7 @@ export async function GET() {
   }
 
   // ECG/HRV
-  const records = await ECGRecordModel.find({ userId: user._id }).sort({ recordedAt: -1 }).limit(200).lean();
+  const records = await ECGRecordModel.find({ userId: user._id, source: "sensor" }).sort({ recordedAt: -1 }).limit(200).lean();
   if (records.length) {
     const recordIds = records.map((r) => r._id);
     const predictions: any[] = await PredictionModel.find({ ecgRecordId: { $in: recordIds } }).lean();

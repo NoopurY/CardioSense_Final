@@ -32,8 +32,7 @@ export function Topbar() {
     router.refresh();
   };
 
-  const isDeviceOnline =
-    profile?.deviceStatus?.toLowerCase().includes("connected") ?? false;
+  const isDeviceOnline = profile?.deviceStatus === "ESP32 Connected";
 
   return (
     <header className="cardio-panel mb-4 flex items-center justify-between p-3">

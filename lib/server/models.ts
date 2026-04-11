@@ -46,7 +46,7 @@ const ECGRecordSchema = new Schema(
     avgHeartRate: Number,
     minHr: Number,
     maxHr: Number,
-    source: { type: String, enum: ["upload", "sensor", "simulated"], required: true },
+    source: { type: String, enum: ["upload", "sensor"], required: true },
     signal: { type: [Number], default: [] },
     processedSignal: { type: [Number], default: [] },
   },

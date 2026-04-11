@@ -3,25 +3,24 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-const weekly = [
-  { day: "Mon", bpm: 78, hrv: 42 },
-  { day: "Tue", bpm: 84, hrv: 36 },
-  { day: "Wed", bpm: 81, hrv: 38 },
-  { day: "Thu", bpm: 86, hrv: 32 },
-  { day: "Fri", bpm: 80, hrv: 44 },
-  { day: "Sat", bpm: 76, hrv: 49 },
-  { day: "Sun", bpm: 79, hrv: 45 },
-];
+type TrendPoint = {
+  day: string;
+  bpm?: number;
+  hrv?: number;
+};
 
-export function HeartRateTrend() {
+export function HeartRateTrend({ data = [] }: { data?: TrendPoint[] }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   if (!mounted) return <div className="h-40 w-full rounded bg-[#031424]" />;
+  if (!data.length) {
+    return <p className="text-sm text-slate-400">No real trend data available yet.</p>;
+  }
 
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer>
-        <LineChart data={weekly}>
+        <LineChart data={data}>
           <XAxis dataKey="day" stroke="#7fa4bf" fontSize={11} />
           <YAxis stroke="#7fa4bf" fontSize={11} />
           <Tooltip contentStyle={{ background: "#041a2e", border: "1px solid #0d4f8c" }} />
@@ -32,15 +31,18 @@ export function HeartRateTrend() {
   );
 }
 
-export function HRVBarChart() {
+export function HRVBarChart({ data = [] }: { data?: TrendPoint[] }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   if (!mounted) return <div className="h-40 w-full rounded bg-[#031424]" />;
+  if (!data.length) {
+    return <p className="text-sm text-slate-400">No real HRV samples available yet.</p>;
+  }
 
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer>
-        <BarChart data={weekly}>
+        <BarChart data={data}>
           <XAxis dataKey="day" stroke="#7fa4bf" fontSize={11} />
           <YAxis stroke="#7fa4bf" fontSize={11} />
           <Tooltip contentStyle={{ background: "#041a2e", border: "1px solid #0d4f8c" }} />

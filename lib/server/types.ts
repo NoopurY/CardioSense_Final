@@ -37,7 +37,7 @@ export type ECGRecord = {
   avgHeartRate: number;
   minHr: number;
   maxHr: number;
-  source: "upload" | "sensor" | "simulated";
+  source: "upload" | "sensor";
   signal: ECGPoint[];
 };
 

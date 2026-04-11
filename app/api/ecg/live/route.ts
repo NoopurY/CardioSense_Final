@@ -2,6 +2,14 @@ import { fail, ok, requireUser } from "@/lib/server/http";
 import { connectMongo } from "@/lib/server/mongodb";
 import { DeviceModel, ECGRecordModel } from "@/lib/server/models";
 
+type LiveRow = {
+  _id: unknown;
+  recordedAt?: Date | string | null;
+  avgHeartRate?: number | null;
+  signal?: unknown[];
+  processedSignal?: unknown[];
+};
+
 export async function GET(request: Request) {
   await connectMongo();
   const auth = await requireUser();
@@ -11,12 +19,26 @@ export async function GET(request: Request) {
   const afterTsRaw = Number(url.searchParams.get("after_ts") ?? "0");
   const afterTs = Number.isFinite(afterTsRaw) && afterTsRaw > 0 ? afterTsRaw : 0;
 
-  const activeDevice = await DeviceModel.findOne<{ _id: unknown }>({ userId: auth.sub, isActive: true })
+  const activeDevice = await DeviceModel.findOne<{
+    _id: unknown;
+    sensorConnected?: boolean;
+    heartbeatAt?: Date | string | null;
+  }>({ userId: auth.sub, isActive: true })
     .sort({ updatedAt: -1 })
-    .select({ _id: 1 })
+    .select({ _id: 1, sensorConnected: 1, heartbeatAt: 1 })
     .lean();
 
   if (!activeDevice?._id) {
+    return ok({ chunks: [], latest_ts: afterTs });
+  }
+
+  const heartbeatAtMs = activeDevice.heartbeatAt ? new Date(activeDevice.heartbeatAt).getTime() : Number.NaN;
+  const isDeviceLive = Boolean(
+    activeDevice.sensorConnected
+      && Number.isFinite(heartbeatAtMs)
+      && Date.now() - heartbeatAtMs <= 12_000,
+  );
+  if (!isDeviceLive) {
     return ok({ chunks: [], latest_ts: afterTs });
   }
 
@@ -27,6 +49,9 @@ export async function GET(request: Request) {
   };
   if (afterTs > 0) {
     query.recordedAt = { $gt: new Date(afterTs) };
+  } else {
+    // First poll should only include truly recent chunks, not historical captures.
+    query.recordedAt = { $gte: new Date(Date.now() - 15_000) };
   }
 
   const rows = await ECGRecordModel.find(query)
@@ -35,7 +60,7 @@ export async function GET(request: Request) {
     .select({ signal: 1, processedSignal: 1, avgHeartRate: 1, recordedAt: 1 })
     .lean();
 
-  const chunks = rows.map((r: any) => ({
+  const chunks = (rows as LiveRow[]).map((r) => ({
     id: String(r._id),
     ts: r.recordedAt ? new Date(r.recordedAt).getTime() : Date.now(),
     bpm: Number(r.avgHeartRate ?? 0),

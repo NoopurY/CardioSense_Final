@@ -10,24 +10,69 @@ import { useCardioStore } from "@/lib/store";
 import { useAuth } from "@/lib/useAuth";
 import { useEffect, useRef, useState } from "react";
 
+type HistoryWindow = {
+  label: string;
+  status: string;
+};
+
+type DashboardProfile = {
+  name?: string;
+  dob?: string;
+  bloodGroup?: string;
+  conditions?: string[];
+  hrv?: number | null;
+  deviceStatus?: string;
+  signalStrength?: number | null;
+  battery?: number | null;
+  latestBpm?: number | null;
+  prediction?: string | null;
+  riskScore?: number | null;
+  insights?: string[];
+  ecgHistory?: HistoryWindow[];
+};
+
 export default function DashboardPage() {
   useAuth();
   const bpm = useCardioStore((s) => s.bpm);
   const ecg = useCardioStore((s) => s.ecgBuffer);
   const pushECG = useCardioStore((s) => s.pushECG);
   const setBpm = useCardioStore((s) => s.setBpm);
-  const [profile, setProfile] = useState<any>(null);
+  const clearLiveData = useCardioStore((s) => s.clearLiveData);
+  const [profile, setProfile] = useState<DashboardProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const lastLiveTsRef = useRef<number>(0);
+  const lastChunkAtRef = useRef<number>(0);
 
   useEffect(() => {
-    fetch("/api/user/profile")
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        setProfile(data?.data || null);
-        setLoading(false);
-      });
-  }, []);
+    let alive = true;
+
+    const refreshProfile = async () => {
+      const res = await fetch("/api/user/profile", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!alive) return;
+
+      const nextProfile = data?.data || null;
+      setProfile(nextProfile);
+      setLoading(false);
+
+      if (nextProfile?.deviceStatus !== "ESP32 Connected") {
+        lastLiveTsRef.current = 0;
+        lastChunkAtRef.current = 0;
+        clearLiveData();
+      }
+    };
+
+    void refreshProfile();
+    const timer = setInterval(() => {
+      void refreshProfile();
+    }, 5000);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [clearLiveData]);
 
   useEffect(() => {
     let alive = true;
@@ -46,6 +91,7 @@ export default function DashboardPage() {
         for (const c of chunks) {
           if (Array.isArray(c.signal) && c.signal.length) {
             pushECG(c.signal);
+            lastChunkAtRef.current = Date.now();
           }
           if (typeof c.bpm === "number" && c.bpm > 0) {
             setBpm(c.bpm);
@@ -80,7 +126,10 @@ export default function DashboardPage() {
   const displayBpm = bpm > 0 ? bpm : profile?.latestBpm ?? null;
   const displayPrediction = profile?.prediction ?? "No prediction yet";
   const hasPrediction = typeof profile?.riskScore === "number";
-  const hasLiveEcg = ecg.length > 10;
+  const isDeviceOnline = profile?.deviceStatus === "ESP32 Connected";
+  const hasFreshChunk = Date.now() - lastChunkAtRef.current <= 4000;
+  const hasLiveEcg = isDeviceOnline && hasFreshChunk && ecg.length > 10;
+  const liveEcgPoints = hasLiveEcg ? ecg : [];
   const hasHistory = typeof profile?.latestBpm === "number";
 
   return (
@@ -122,11 +171,11 @@ export default function DashboardPage() {
           subtitle={hasLiveEcg ? "Recording..." : "Waiting for device stream"}
           right={hasLiveEcg ? <Badge tone="danger">REC</Badge> : <Badge tone="info">IDLE</Badge>}
         >
-          <LiveECGChart points={ecg} />
+          <LiveECGChart points={liveEcgPoints} />
         </Panel>
         <Panel title="ECG History">
           <div className="grid gap-2 text-sm">
-            {profile?.ecgHistory?.length ? profile.ecgHistory.map((h: any) => (
+            {profile?.ecgHistory?.length ? profile.ecgHistory.map((h) => (
               <div key={h.label} className="rounded-lg border border-slate-700/70 p-2 text-slate-300">
                 <div className="flex items-center justify-between">
                   <span>{h.label} Capture Window</span>
