@@ -126,6 +126,7 @@ export default function DashboardPage() {
   const displayBpm = bpm > 0 ? bpm : profile?.latestBpm ?? null;
   const displayPrediction = profile?.prediction ?? "No prediction yet";
   const hasPrediction = typeof profile?.riskScore === "number";
+  const riskGaugeValue = hasPrediction ? profile.riskScore ?? 0 : 0;
   const isDeviceOnline = profile?.deviceStatus === "ESP32 Connected";
   const hasFreshChunk = Date.now() - lastChunkAtRef.current <= 4000;
   const hasLiveEcg = isDeviceOnline && hasFreshChunk && ecg.length > 10;
@@ -190,7 +191,7 @@ export default function DashboardPage() {
 
       <div className="grid gap-4">
         <Panel title="Arrhythmia Prediction">
-          <RiskGauge value={hasPrediction ? profile.riskScore : 0} />
+          <RiskGauge value={riskGaugeValue} />
           <p className="text-center text-sm text-slate-300">Prediction: {displayPrediction}</p>
         </Panel>
         <Panel title="AI Insights">
